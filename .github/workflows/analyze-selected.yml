@@ -1,0 +1,45 @@
+name: Secilen Maclari Derin Analiz Et
+
+on:
+  workflow_dispatch:
+    inputs:
+      selected_fixture_ids:
+        description: 'Uygulamadan kopyalanan mac numaralari (1-3 adet, virgul ile)'
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: akillikupon-selected-analysis
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Depoyu al
+        uses: actions/checkout@v4
+      - name: Python 3.11 kurulumu
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python analiz kodunu hazirla
+        run: |
+          mkdir -p source
+          unzip -q AkilliKuponAI-secimli-derin-analiz-v4.zip -d source
+      - name: Sadece secilen maclari analiz et
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          SELECTED_FIXTURE_IDS: ${{ inputs.selected_fixture_ids }}
+        run: python3 source/AkilliKuponAI/analysis_fetch.py
+      - name: Yalnizca herkese acik analiz sonucunu kaydet
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/analysis.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update manually selected match analyses'
+            git push
+          fi
