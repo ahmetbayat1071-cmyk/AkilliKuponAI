@@ -1,0 +1,77 @@
+name: Gercek Mac Verilerini Guncelle
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '21 0,6,12,18 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Depoyu indir
+        uses: actions/checkout@v4
+      - name: API-Football mac programini getir
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: |
+          python3 - <<'PY'
+          import datetime, json, os, urllib.parse, urllib.request
+          from zoneinfo import ZoneInfo
+
+          key = os.environ.get('API_FOOTBALL_KEY', '')
+          if not key:
+              raise SystemExit('API_FOOTBALL_KEY sirri eksik.')
+          today = datetime.datetime.now(ZoneInfo('Europe/Istanbul')).date()
+          dates = [(today + datetime.timedelta(days=d)).isoformat() for d in range(2)]
+          matches = []
+          for date in dates:
+              query = urllib.parse.urlencode({'date': date, 'timezone': 'Europe/Istanbul'})
+              url = 'https://v3.football.api-sports.io/fixtures?' + query
+              request = urllib.request.Request(url, headers={'x-apisports-key': key, 'Accept': 'application/json'})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  payload = json.load(response)
+              if payload.get('errors'):
+                  raise SystemExit('API-Football hata bildirdi: ' + str(payload['errors']))
+              if not isinstance(payload.get('response'), list):
+                  raise SystemExit('API-Football yanitinda mac listesi yok.')
+              for item in payload['response']:
+                  fixture = item.get('fixture') or {}
+                  league = item.get('league') or {}
+                  teams = item.get('teams') or {}
+                  home = teams.get('home') or {}
+                  away = teams.get('away') or {}
+                  matches.append({
+                      'id': fixture.get('id'),
+                      'day': date,
+                      'utc': fixture.get('date'),
+                      'home': home.get('name') or '?',
+                      'away': away.get('name') or '?',
+                      'league': league.get('name') or '',
+                      'country': league.get('country') or '',
+                      'status': (fixture.get('status') or {}).get('short') or ''
+                  })
+          matches.sort(key=lambda m: (m.get('utc') or '', m.get('country') or ''))
+          snapshot = {
+              'generated_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'source': 'API-Football',
+              'dates': dates,
+              'matches': matches
+          }
+          os.makedirs('data', exist_ok=True)
+          with open('data/fixtures.json', 'w', encoding='utf-8') as f:
+              json.dump(snapshot, f, ensure_ascii=False, separators=(',', ':'))
+          print('Kaydedilen mac:', len(matches))
+          PY
+      - name: Herkese acik mac listesini guncelle
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/fixtures.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update public football fixtures snapshot'
+            git push
+          fi
